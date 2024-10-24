@@ -11,9 +11,25 @@ interface Room {
     roomUsers: { name: string; index: string }[];
 }
 
+interface Ship {
+    position: {
+        x: number;
+        y: number;
+    };
+    direction: boolean;
+    length: number;
+    type: 'small' | 'medium' | 'large' | 'huge';
+}
+
+interface Game {
+    gameId: string;
+    ships: { indexPlayer: string; playerShips: Ship[] }[];
+}
+
 class Database {
     private users: User[] = [];
     private rooms: Room[] = [];
+    private games: Game[] = [];
     private static instance: Database;
 
     constructor() {
@@ -62,8 +78,20 @@ class Database {
         return room;
     }
 
+    roomIsFull(room: Room) {
+        return room.roomUsers.length > 1;
+    }
+
     getAvailableRooms(): Room[] {
         return this.rooms.filter((room) => room.roomUsers.length < 2);
+    }
+
+    createGame() {
+        const newGame = {
+            gameId: randomUUID(),
+        };
+
+        return newGame;
     }
 
     private userInRoom(user: User, room: Room) {
