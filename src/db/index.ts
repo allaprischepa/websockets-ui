@@ -11,7 +11,7 @@ interface Room {
     roomUsers: { name: string; index: string }[];
 }
 
-interface Ship {
+export interface Ship {
     position: {
         x: number;
         y: number;
@@ -90,7 +90,9 @@ class Database {
     createGame() {
         const newGame = {
             gameId: randomUUID(),
+            ships: [],
         };
+        this.games.push(newGame);
 
         return newGame;
     }
@@ -103,6 +105,41 @@ class Database {
         });
 
         return roomInd !== -1 ? this.rooms[roomInd] : null;
+    }
+
+    addUserShipsToGame(_game: string | Game, ships: Ship[], _user: string | User): Game | null {
+        const game = typeof _game === 'string' ? this.getGameById(_game) : _game;
+        const userId = typeof _user === 'string' ? _user : _user.id;
+
+        if (game) {
+            game.ships.push({
+                playerShips: ships,
+                indexPlayer: userId,
+            });
+        }
+
+        return game;
+    }
+
+    getGamePlayersIds(_game: string | Game): string[] {
+        const game = typeof _game === 'string' ? this.getGameById(_game) : _game;
+        let ids: string[] = [];
+
+        if (game) ids = game.ships.map((shipsArr) => shipsArr.indexPlayer);
+
+        return ids;
+    }
+
+    getPlayerShips(_game: string | Game, _user: string | User): Ship[] {
+        const game = typeof _game === 'string' ? this.getGameById(_game) : _game;
+        const userId = typeof _user === 'string' ? _user : _user.id;
+        let ships: Ship[] = [];
+
+        if (game) {
+            ships = game.ships.filter((shipsArr) => shipsArr.indexPlayer === userId)[0].playerShips;
+        }
+
+        return ships;
     }
 
     private getRoomById(roomId: string): Room | null {
@@ -143,6 +180,13 @@ class Database {
         if (room && user) {
             room.roomUsers = room.roomUsers.filter((roomUser) => roomUser.index !== user.id);
         }
+    }
+
+    private getGameById(gameId: string): Game | null {
+        const gameInd = this.games.findIndex((game) => game.gameId === gameId);
+        const game = gameInd !== -1 ? this.games[gameInd] : null;
+
+        return game;
     }
 }
 

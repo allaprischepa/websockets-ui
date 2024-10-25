@@ -1,6 +1,6 @@
 import { RawData } from 'ws';
 import { jsonParse, jsonStringify, log, rawDataToStr } from '../utils/utils';
-import db from '../db';
+import db, { Ship } from '../db';
 
 export interface Response {
     responseMsg: string;
@@ -44,6 +44,14 @@ export class WsHandler {
                 case 'add_user_to_room':
                     if (prsdData) {
                         const eventResponses = this.handleRequestTypeAddToRoom(prsdData, currentUserId);
+                        const eventResponses2 = this.handleResponseTypeUpdateRoom();
+
+                        responses.push(...eventResponses, ...eventResponses2);
+                    }
+                    break;
+                case 'add_ships':
+                    if (prsdData) {
+                        const eventResponses = this.handleRequestTypeAddShips(prsdData);
                         const eventResponses2 = this.handleResponseTypeUpdateRoom();
 
                         responses.push(...eventResponses, ...eventResponses2);
@@ -129,9 +137,36 @@ export class WsHandler {
 
                 responses.push({
                     responseMsg,
-                    to: userIds,
+                    to: [roomUserId],
                 });
             });
+        }
+
+        return responses;
+    }
+
+    private handleRequestTypeAddShips(prsdData: { gameId: string; ships: Ship[]; indexPlayer: string }) {
+        const { gameId, ships, indexPlayer } = prsdData;
+        const game = db.addUserShipsToGame(gameId, ships, indexPlayer);
+        const responses: Response[] = [];
+
+        if (game) {
+            const playersIds = db.getGamePlayersIds(game);
+
+            if (playersIds.length === 2) {
+                playersIds.forEach((id) => {
+                    const responseMsg = jsonStringify({
+                        type: 'start_game',
+                        data: jsonStringify({
+                            ships: db.getPlayerShips(game, id),
+                            currentPlayerIndex: id,
+                        }),
+                        id: 0,
+                    });
+
+                    responses.push({ responseMsg, to: [id] });
+                });
+            }
         }
 
         return responses;
