@@ -9,7 +9,11 @@ export interface Response {
 }
 
 export class WsHandler {
-    handleRequest(rawData: RawData, userId: string): { responses: Response[]; currentUserId: string } {
+    handleRequest(
+        rawData: RawData,
+        userId: string,
+        loggedUsers: string[] = []
+    ): { responses: Response[]; currentUserId: string } {
         const responses = [];
         let currentUserId = userId;
         const rawDataStr = rawDataToStr(rawData);
@@ -23,7 +27,7 @@ export class WsHandler {
             switch (type) {
                 case 'reg':
                     if (prsdData) {
-                        const { eventResponses, id } = this.handleRequestTypeReg(prsdData);
+                        const { eventResponses, id } = this.handleRequestTypeReg(prsdData, loggedUsers);
                         const eventResponses2 = this.handleResponseTypeUpdateRoom();
                         currentUserId = id;
 
@@ -51,7 +55,7 @@ export class WsHandler {
         return { responses, currentUserId };
     }
 
-    private handleRequestTypeReg(prsdData: { name: string; password: string }) {
+    private handleRequestTypeReg(prsdData: { name: string; password: string }, loggedUsers: string[]) {
         const { name, password } = prsdData;
         let user = db.getUserByName(name);
         let responseMsg = '';
@@ -62,6 +66,9 @@ export class WsHandler {
             if (password !== user.password) {
                 error = true;
                 errorText = 'Incorrect password';
+            } else if (loggedUsers.includes(user.id)) {
+                error = true;
+                errorText = 'You already logged in';
             }
         } else {
             user = db.createUser(name, password);
@@ -75,13 +82,17 @@ export class WsHandler {
 
         return {
             eventResponses: [{ responseMsg }],
-            id: user.id,
+            id: error ? '' : user.id,
         };
     }
 
     private handleRequestTypeCreateRoom(userId: string) {
-        const newRoom = db.createRoom();
-        db.addUserToRoom(newRoom.roomId, userId);
+        const userRoom = db.getUserRoom(userId);
+
+        if (!userRoom) {
+            const newRoom = db.createRoom();
+            db.addUserToRoom(newRoom.roomId, userId);
+        }
 
         return [];
     }
