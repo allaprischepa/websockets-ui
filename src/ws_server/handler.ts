@@ -29,9 +29,10 @@ export class WsHandler {
                     if (prsdData) {
                         const { eventResponses, id } = this.handleRequestTypeReg(prsdData, loggedUsers);
                         const eventResponses2 = this.handleResponseTypeUpdateRoom();
+                        const eventResponses3 = this.handleResponseTypeUpdateWinners();
                         currentUserId = id;
 
-                        responses.push(...eventResponses, ...eventResponses2);
+                        responses.push(...eventResponses, ...eventResponses2, ...eventResponses3);
                     }
 
                     break;
@@ -61,6 +62,29 @@ export class WsHandler {
         }
 
         return { responses, currentUserId };
+    }
+
+    removeUserFromRoomsAndGames(userId: string): Response[] {
+        db.removeUserFromRooms(userId);
+        const gameToFinish = db.removeUserFromGames(userId);
+        const responses: Response[] = [];
+
+        if (gameToFinish) {
+            const winnerId = gameToFinish.ships.filter((shipsArr) => shipsArr.indexPlayer !== userId)[0].indexPlayer;
+            db.addWinner(winnerId);
+
+            const responseMsg = jsonStringify({
+                type: 'finish',
+                data: jsonStringify({ winPlayer: winnerId }),
+                id: 0,
+            });
+            responses.push({ responseMsg, to: [winnerId] });
+
+            const eventResponses = this.handleResponseTypeUpdateWinners();
+            responses.push(...eventResponses);
+        }
+
+        return responses;
     }
 
     private handleRequestTypeReg(prsdData: { name: string; password: string }, loggedUsers: string[]) {
@@ -170,5 +194,16 @@ export class WsHandler {
         }
 
         return responses;
+    }
+
+    private handleResponseTypeUpdateWinners() {
+        const winners = db.getWinners();
+        const responseMsg = jsonStringify({
+            type: 'update_winners',
+            data: jsonStringify(winners),
+            id: 0,
+        });
+
+        return [{ responseMsg, broadcast: true }];
     }
 }

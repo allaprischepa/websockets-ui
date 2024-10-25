@@ -26,10 +26,16 @@ interface Game {
     ships: { indexPlayer: string; playerShips: Ship[] }[];
 }
 
+interface Winner {
+    name: string;
+    wins: number;
+}
+
 class Database {
     private users: User[] = [];
     private rooms: Room[] = [];
     private games: Game[] = [];
+    private winners: Winner[] = [];
     private static instance: Database;
 
     constructor() {
@@ -142,6 +148,52 @@ class Database {
         return ships;
     }
 
+    getUserGame(userId: string): Game | null {
+        const gameInd = this.games.findIndex((game) => {
+            return this.userInGame(userId, game);
+        });
+
+        return gameInd !== -1 ? this.games[gameInd] : null;
+    }
+
+    removeUserFromRooms(userId: string) {
+        this.rooms = this.rooms.filter((room) => {
+            return !this.userInRoom(userId, room) && room.roomUsers.length;
+        });
+    }
+
+    removeUserFromGames(userId: string): Game | null {
+        const userGame = this.getUserGame(userId);
+
+        if (userGame) {
+            this.games = this.games.filter((game) => game !== userGame);
+        }
+
+        return userGame;
+    }
+
+    addWinner(_user: string | User): Winner[] {
+        const user = typeof _user === 'string' ? this.getUserById(_user) : _user;
+
+        if (user) {
+            if (this.userIsInWinnersList(user)) {
+                this.winners = this.winners.map((winner) => {
+                    if (winner.name === user.name) winner.wins++;
+
+                    return winner;
+                });
+            } else {
+                this.winners.push({ name: user.name, wins: 1 });
+            }
+        }
+
+        return this.winners;
+    }
+
+    getWinners(): Winner[] {
+        return this.winners;
+    }
+
     private getRoomById(roomId: string): Room | null {
         const roomInd = this.rooms.findIndex((room) => room.roomId === roomId);
         const room = roomInd !== -1 ? this.rooms[roomInd] : null;
@@ -173,6 +225,19 @@ class Database {
         return result;
     }
 
+    private userInGame(_user: string | User, _game: string | Game) {
+        const userId = typeof _user === 'string' ? _user : _user.id;
+        const game = typeof _game === 'string' ? this.getGameById(_game) : _game;
+        let result = false;
+
+        if (game) {
+            const userInd = game.ships.findIndex((shipsArr) => shipsArr.indexPlayer === userId);
+            result = userInd !== -1;
+        }
+
+        return result;
+    }
+
     private removeUserFromRoom(_room: string | Room, _user: string | User) {
         const room = typeof _room === 'string' ? this.getRoomById(_room) : _room;
         const user = typeof _user === 'string' ? this.getUserById(_user) : _user;
@@ -187,6 +252,13 @@ class Database {
         const game = gameInd !== -1 ? this.games[gameInd] : null;
 
         return game;
+    }
+
+    private userIsInWinnersList(_user: string | User): boolean {
+        const user = typeof _user === 'string' ? this.getUserById(_user) : _user;
+        const userInd = this.winners.findIndex((winner) => winner.name === user?.name);
+
+        return userInd !== -1;
     }
 }
 

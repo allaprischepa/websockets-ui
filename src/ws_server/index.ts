@@ -1,8 +1,24 @@
 import WebSocket, { WebSocketServer } from 'ws';
-import { WsHandler } from './handler';
+import { Response, WsHandler } from './handler';
 import { log } from '../utils/utils';
 
 type WebsocketExtended = WebSocket & { userId: string };
+
+function sendresponses(server: WebSocketServer, ws: WebSocket, responses: Response[]) {
+    if (responses.length > 0) {
+        responses.forEach((response) => {
+            log.magenta(`Response: ${response.responseMsg}`);
+
+            if (response.broadcast) {
+                broadcast(server, response.responseMsg);
+            } else if (response.to) {
+                toSomeClients(server, response.to, response.responseMsg);
+            } else {
+                ws.send(response.responseMsg);
+            }
+        });
+    }
+}
 
 function broadcast(server: WebSocketServer, msg: string) {
     server.clients.forEach((client) => {
@@ -45,31 +61,28 @@ wsServer.on('connection', function connection(ws: WebsocketExtended) {
     ws.userId = '';
 
     ws.on('error', (err) => {
-        if (ws.userId) log.red(`Socket with userId: ${ws.userId} has error: ${err.message}`);
+        if (ws.userId) {
+            log.red(`Socket with userId: ${ws.userId} has error: ${err.message}`);
+
+            const responses = handler.removeUserFromRoomsAndGames(ws.userId);
+            sendresponses(server, ws, responses);
+        }
     });
     ws.on('close', (code) => {
-        if (ws.userId) log.red(`Socket with userId: ${ws.userId} closed with code: ${code}`);
+        if (ws.userId) {
+            log.red(`Socket with userId: ${ws.userId} closed with code: ${code}`);
+
+            const responses = handler.removeUserFromRoomsAndGames(ws.userId);
+            sendresponses(server, ws, responses);
+        }
     });
 
     ws.on('message', function message(rawData) {
         const loggedUsers = getLoggedUsers(server);
         const { responses, currentUserId } = handler.handleRequest(rawData, ws.userId, loggedUsers);
-
         if (currentUserId) ws.userId = currentUserId;
 
-        if (responses.length > 0) {
-            responses.forEach((response) => {
-                log.magenta(`Response: ${response.responseMsg}`);
-
-                if (response.broadcast) {
-                    broadcast(server, response.responseMsg);
-                } else if (response.to) {
-                    toSomeClients(server, response.to, response.responseMsg);
-                } else {
-                    ws.send(response.responseMsg);
-                }
-            });
-        }
+        sendresponses(server, ws, responses);
     });
 });
 
