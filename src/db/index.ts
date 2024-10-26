@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { getRandomInt } from '../utils/utils';
 
 interface User {
     id: string;
@@ -11,19 +12,34 @@ interface Room {
     roomUsers: { name: string; index: string }[];
 }
 
+interface Position {
+    x: number;
+    y: number;
+}
+
 export interface Ship {
-    position: {
-        x: number;
-        y: number;
-    };
+    position: Position;
     direction: boolean;
     length: number;
     type: 'small' | 'medium' | 'large' | 'huge';
 }
 
+interface ShipExtended {
+    positions: Position[];
+    shotDown: Position[];
+    around: Position[];
+    played: Position[];
+    killed: boolean;
+}
 interface Game {
     gameId: string;
-    ships: { indexPlayer: string; playerShips: Ship[] }[];
+    ships: {
+        indexPlayer: string;
+        playerShips: Ship[];
+        shipsExtended: ShipExtended[];
+    }[];
+    players: string[];
+    turn: string;
 }
 
 interface Winner {
@@ -93,10 +109,12 @@ class Database {
         return this.rooms.filter((room) => room.roomUsers.length === 1);
     }
 
-    createGame() {
-        const newGame = {
+    createGame(userIds: string[]) {
+        const newGame: Game = {
             gameId: randomUUID(),
             ships: [],
+            players: userIds,
+            turn: '',
         };
         this.games.push(newGame);
 
@@ -121,6 +139,7 @@ class Database {
             game.ships.push({
                 playerShips: ships,
                 indexPlayer: userId,
+                shipsExtended: this.getShipsExtended(ships),
             });
         }
 
@@ -142,7 +161,7 @@ class Database {
         let ships: Ship[] = [];
 
         if (game) {
-            ships = game.ships.filter((shipsArr) => shipsArr.indexPlayer === userId)[0].playerShips;
+            ships = game.ships.filter((shipsArr) => shipsArr.indexPlayer === userId)[0]?.playerShips;
         }
 
         return ships;
@@ -156,17 +175,23 @@ class Database {
         return gameInd !== -1 ? this.games[gameInd] : null;
     }
 
-    removeUserFromRooms(userId: string) {
-        this.rooms = this.rooms.filter((room) => {
-            return !this.userInRoom(userId, room) && room.roomUsers.length;
-        });
+    removeUserFromRooms(userId: string): Room | null {
+        const userRoom = this.getUserRoom(userId);
+
+        if (userRoom) {
+            this.rooms = this.rooms.filter((room) => {
+                return !this.userInRoom(userId, room) && room.roomUsers.length;
+            });
+        }
+
+        return userRoom;
     }
 
     removeUserFromGames(userId: string): Game | null {
         const userGame = this.getUserGame(userId);
 
         if (userGame) {
-            this.games = this.games.filter((game) => game !== userGame);
+            this.games = this.games.filter((game) => game.gameId !== userGame.gameId);
         }
 
         return userGame;
@@ -192,6 +217,98 @@ class Database {
 
     getWinners(): Winner[] {
         return this.winners;
+    }
+
+    performAttack(_game: string | Game, position: Position, indexPlayer: string) {
+        const game = typeof _game === 'string' ? this.getGameById(_game) : _game;
+        const result: { status: string; position: Position }[] = [];
+        let extraMove = false;
+        let win = false;
+
+        if (game) {
+            const enemyShips = game.ships.find((shipsArr) => shipsArr.indexPlayer !== indexPlayer);
+
+            if (enemyShips) {
+                let positionIsUnderShip = false;
+                let alreadyPlayed = false;
+
+                enemyShips.shipsExtended.forEach((ship) => {
+                    if (!positionIsUnderShip && this.positionInArray(ship.positions, position)) {
+                        positionIsUnderShip = true;
+                        alreadyPlayed = this.positionInArray(ship.played, position);
+
+                        if (!ship.killed) {
+                            extraMove = true && !alreadyPlayed;
+
+                            if (ship.positions.length === 1) {
+                                ship.shotDown.push(position);
+                                ship.killed = true;
+
+                                result.push({ status: 'killed', position });
+                                ship.played.push(position);
+
+                                ship.around.forEach((aroundPos) => {
+                                    result.push({ status: 'miss', position: aroundPos });
+                                    ship.played.push(aroundPos);
+                                });
+                            } else {
+                                if (!this.positionInArray(ship.shotDown, position)) ship.shotDown.push(position);
+
+                                if (ship.positions.length === ship.shotDown.length) {
+                                    ship.killed = true;
+
+                                    ship.positions.forEach((shipPos) => {
+                                        result.push({ status: 'killed', position: shipPos });
+                                        if (!this.positionInArray(ship.played, shipPos)) ship.played.push(shipPos);
+                                    });
+
+                                    ship.around.forEach((aroundPos) => {
+                                        result.push({ status: 'miss', position: aroundPos });
+                                        if (!this.positionInArray(ship.played, aroundPos)) ship.played.push(aroundPos);
+                                    });
+                                } else {
+                                    result.push({ status: 'shot', position });
+                                    ship.played.push(position);
+                                }
+                            }
+                        }
+                    }
+                });
+
+                if (!positionIsUnderShip) result.push({ status: 'miss', position });
+
+                const stillAliveShips = enemyShips.shipsExtended.filter((ship) => !ship.killed);
+                if (stillAliveShips.length === 0) win = true;
+            }
+        }
+
+        return { result, extraMove, win };
+    }
+
+    getRandomEnemyPosition(_game: string | Game, indexPlayer: string) {
+        const game = typeof _game === 'string' ? this.getGameById(_game) : _game;
+        let x = getRandomInt(9);
+        let y = getRandomInt(9);
+
+        if (game) {
+            const enemyShips = game.ships.find((shipsArr) => shipsArr.indexPlayer !== indexPlayer);
+
+            if (enemyShips) {
+                const played: Position[] = [];
+                enemyShips.shipsExtended.forEach((ship) => played.push(...ship.played));
+
+                while (this.positionInArray(played, { x, y })) {
+                    x = getRandomInt(9);
+                    y = getRandomInt(9);
+                }
+            }
+        }
+
+        return { x, y };
+    }
+
+    private positionInArray(positionsArr: Position[], position: Position) {
+        return positionsArr.filter((pos) => pos.x === position.x && pos.y === position.y).length > 0;
     }
 
     private getRoomById(roomId: string): Room | null {
@@ -231,8 +348,7 @@ class Database {
         let result = false;
 
         if (game) {
-            const userInd = game.ships.findIndex((shipsArr) => shipsArr.indexPlayer === userId);
-            result = userInd !== -1;
+            result = game.players.includes(userId);
         }
 
         return result;
@@ -247,7 +363,7 @@ class Database {
         }
     }
 
-    private getGameById(gameId: string): Game | null {
+    getGameById(gameId: string): Game | null {
         const gameInd = this.games.findIndex((game) => game.gameId === gameId);
         const game = gameInd !== -1 ? this.games[gameInd] : null;
 
@@ -259,6 +375,62 @@ class Database {
         const userInd = this.winners.findIndex((winner) => winner.name === user?.name);
 
         return userInd !== -1;
+    }
+
+    private getShipsExtended(ships: Ship[]): ShipExtended[] {
+        const shipsExtended: ShipExtended[] = [];
+
+        ships.forEach((ship) => {
+            const {
+                position: { x, y },
+                length,
+                direction,
+            } = ship;
+            const positions: Position[] = [];
+            const around: Position[] = [];
+
+            if (direction) {
+                for (let y1 = y; y1 < y + length; y1++) {
+                    // Set ship positions
+                    positions.push({ x, y: y1 });
+
+                    if (x - 1 >= 0) around.push({ x: x - 1, y: y1 }); // Set around positions from left
+                    if (x + 1 <= 9) around.push({ x: x + 1, y: y1 }); // Set around positions from right
+                }
+
+                for (let x1 = x - 1; x1 <= x + 1; x1++) {
+                    if (x1 >= 0 && x1 <= 9) {
+                        if (y - 1 >= 0) around.push({ x: x1, y: y - 1 }); // Set around positions from above
+                        if (y + length <= 9) around.push({ x: x1, y: y + length }); // Set around positions from below
+                    }
+                }
+            } else {
+                for (let x1 = x; x1 < x + length; x1++) {
+                    // Set ship positions
+                    positions.push({ x: x1, y });
+
+                    if (y - 1 >= 0) around.push({ x: x1, y: y - 1 }); // Set around positions from above
+                    if (y + 1 <= 9) around.push({ x: x1, y: y + 1 }); // Set around positions from below
+                }
+
+                for (let y1 = y - 1; y1 <= y + 1; y1++) {
+                    if (y1 >= 0 && y1 <= 9) {
+                        if (x - 1 >= 0) around.push({ x: x - 1, y: y1 }); // Set around positions from left
+                        if (x + length <= 9) around.push({ x: x + length, y: y1 }); // Set around positions from below
+                    }
+                }
+            }
+
+            shipsExtended.push({
+                positions,
+                shotDown: [],
+                around,
+                played: [],
+                killed: false,
+            });
+        });
+
+        return shipsExtended;
     }
 }
 

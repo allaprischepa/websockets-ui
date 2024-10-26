@@ -27,3 +27,7 @@ export const log = {
     blue: (text: string) => console.log('\x1b[34m' + text + '\x1b[0m'),
     magenta: (text: string) => console.log('\x1b[35m' + text + '\x1b[0m'),
 };
+
+export function getRandomInt(max: number) {
+    return Math.floor(Math.random() * max);
+}

@@ -8,6 +8,28 @@ export interface Response {
     to?: string[]; // if we send to particular clients
 }
 
+interface ReqDataReg {
+    name: string;
+    password: string;
+}
+
+interface ReqDataAddToRoom {
+    indexRoom: string;
+}
+
+interface ReqDataAddShips {
+    gameId: string;
+    ships: Ship[];
+    indexPlayer: string;
+}
+
+interface ReqDataAttack {
+    gameId: string;
+    x: number;
+    y: number;
+    indexPlayer: string;
+}
+
 export class WsHandler {
     handleRequest(
         rawData: RawData,
@@ -58,6 +80,14 @@ export class WsHandler {
                         responses.push(...eventResponses, ...eventResponses2);
                     }
                     break;
+                case 'attack':
+                case 'randomAttack':
+                    if (prsdData) {
+                        const eventResponses = this.handleRequestTypeAttack(prsdData, type === 'randomAttack');
+
+                        responses.push(...eventResponses);
+                    }
+                    break;
             }
         }
 
@@ -70,27 +100,25 @@ export class WsHandler {
         const responses: Response[] = [];
 
         if (gameToFinish) {
-            const winnerId = gameToFinish.ships.filter((shipsArr) => shipsArr.indexPlayer !== userId)[0].indexPlayer;
-            db.addWinner(winnerId);
+            const winnerId = gameToFinish.players.filter((playerId) => playerId !== userId)[0];
 
-            const responseMsg = jsonStringify({
-                type: 'finish',
-                data: jsonStringify({ winPlayer: winnerId }),
-                id: 0,
-            });
-            responses.push({ responseMsg, to: [winnerId] });
+            if (winnerId) {
+                db.addWinner(winnerId);
 
-            const eventResponses = this.handleResponseTypeUpdateWinners();
-            responses.push(...eventResponses);
+                const responseMsg = this.createResponseMessage('finish', { winPlayer: winnerId });
+                responses.push({ responseMsg, to: [winnerId] });
+
+                const eventResponses = this.handleResponseTypeUpdateWinners();
+                responses.push(...eventResponses);
+            }
         }
 
         return responses;
     }
 
-    private handleRequestTypeReg(prsdData: { name: string; password: string }, loggedUsers: string[]) {
+    private handleRequestTypeReg(prsdData: ReqDataReg, loggedUsers: string[]) {
         const { name, password } = prsdData;
         let user = db.getUserByName(name);
-        let responseMsg = '';
         let error = false;
         let errorText = '';
 
@@ -106,11 +134,7 @@ export class WsHandler {
             user = db.createUser(name, password);
         }
 
-        responseMsg = jsonStringify({
-            type: 'reg',
-            data: jsonStringify({ user, error, errorText }),
-            id: 0,
-        });
+        const responseMsg = this.createResponseMessage('reg', { user, error, errorText });
 
         return {
             eventResponses: [{ responseMsg }],
@@ -131,32 +155,24 @@ export class WsHandler {
 
     private handleResponseTypeUpdateRoom() {
         const rooms = db.getAvailableRooms();
-        const responseMsg = jsonStringify({
-            type: 'update_room',
-            data: jsonStringify(rooms),
-            id: 0,
-        });
+        const responseMsg = this.createResponseMessage('update_room', rooms);
 
         return [{ responseMsg, broadcast: true }];
     }
 
-    private handleRequestTypeAddToRoom(prsdData: { indexRoom: string }, userId: string) {
+    private handleRequestTypeAddToRoom(prsdData: ReqDataAddToRoom, userId: string) {
         const { indexRoom } = prsdData;
         let responses: Response[] = [];
 
         const room = db.addUserToRoom(indexRoom, userId);
         if (room && db.roomIsFull(room)) {
-            const newGame = db.createGame();
             const userIds = room.roomUsers.map((roomUser) => roomUser.index);
+            const newGame = db.createGame(userIds);
 
             userIds.forEach((roomUserId) => {
-                const responseMsg = jsonStringify({
-                    type: 'create_game',
-                    data: jsonStringify({
-                        idGame: newGame.gameId,
-                        idPlayer: roomUserId,
-                    }),
-                    id: 0,
+                const responseMsg = this.createResponseMessage('create_game', {
+                    idGame: newGame.gameId,
+                    idPlayer: roomUserId,
                 });
 
                 responses.push({
@@ -169,7 +185,7 @@ export class WsHandler {
         return responses;
     }
 
-    private handleRequestTypeAddShips(prsdData: { gameId: string; ships: Ship[]; indexPlayer: string }) {
+    private handleRequestTypeAddShips(prsdData: ReqDataAddShips) {
         const { gameId, ships, indexPlayer } = prsdData;
         const game = db.addUserShipsToGame(gameId, ships, indexPlayer);
         const responses: Response[] = [];
@@ -178,18 +194,21 @@ export class WsHandler {
             const playersIds = db.getGamePlayersIds(game);
 
             if (playersIds.length === 2) {
+                const nextTurn = playersIds.filter((id) => id !== game.turn)[0];
+
                 playersIds.forEach((id) => {
-                    const responseMsg = jsonStringify({
-                        type: 'start_game',
-                        data: jsonStringify({
-                            ships: db.getPlayerShips(game, id),
-                            currentPlayerIndex: id,
-                        }),
-                        id: 0,
+                    const responseMsg1 = this.createResponseMessage('start_game', {
+                        ships: db.getPlayerShips(game, id),
+                        currentPlayerIndex: id,
                     });
 
-                    responses.push({ responseMsg, to: [id] });
+                    responses.push({ responseMsg: responseMsg1, to: [id] });
                 });
+
+                game.turn = nextTurn;
+                const responseMsg2 = this.createResponseMessage('turn', { currentPlayer: nextTurn });
+
+                responses.push({ responseMsg: responseMsg2, to: playersIds });
             }
         }
 
@@ -198,12 +217,68 @@ export class WsHandler {
 
     private handleResponseTypeUpdateWinners() {
         const winners = db.getWinners();
-        const responseMsg = jsonStringify({
-            type: 'update_winners',
-            data: jsonStringify(winners),
-            id: 0,
-        });
+        const responseMsg = this.createResponseMessage('update_winners', winners);
 
         return [{ responseMsg, broadcast: true }];
+    }
+
+    private handleRequestTypeAttack(prsdData: ReqDataAttack, random = false) {
+        const { gameId, indexPlayer } = prsdData;
+        let { x, y } = prsdData;
+        const game = db.getGameById(gameId);
+        const responses: Response[] = [];
+
+        if (game && (!game.turn || indexPlayer === game.turn)) {
+            if (random) {
+                const randomPos = db.getRandomEnemyPosition(game, indexPlayer);
+                x = randomPos.x;
+                y = randomPos.y;
+            }
+
+            const playersIds = db.getGamePlayersIds(game);
+            const { result, extraMove, win } = db.performAttack(game, { x, y }, indexPlayer);
+            const nextTurn = extraMove ? indexPlayer : playersIds.filter((id) => id !== game.turn)[0];
+
+            if (result) {
+                result.forEach((res) => {
+                    playersIds.forEach((playerId) => {
+                        const responseMsg = this.createResponseMessage('attack', {
+                            position: res.position,
+                            currentPlayer: indexPlayer,
+                            status: res.status,
+                        });
+
+                        responses.push({ responseMsg, to: [playerId] });
+                    });
+                });
+
+                if (win) {
+                    db.addWinner(indexPlayer);
+                    playersIds.forEach((playerId) => {
+                        db.removeUserFromRooms(playerId);
+                        db.removeUserFromGames(playerId);
+                    });
+                    const eventResponses = this.handleResponseTypeUpdateWinners();
+                    const responseMsg = this.createResponseMessage('finish', { winPlayer: indexPlayer });
+
+                    responses.push({ responseMsg, to: playersIds }, ...eventResponses);
+                } else {
+                    game.turn = nextTurn;
+                    const responseMsg2 = this.createResponseMessage('turn', { currentPlayer: nextTurn });
+
+                    responses.push({ responseMsg: responseMsg2, to: playersIds });
+                }
+            }
+        }
+
+        return responses;
+    }
+
+    private createResponseMessage(type: string, data: unknown): string {
+        return jsonStringify({
+            type,
+            data: jsonStringify(data),
+            id: 0,
+        });
     }
 }
