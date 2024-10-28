@@ -1,11 +1,13 @@
 import { RawData } from 'ws';
-import { jsonParse, jsonStringify, log, rawDataToStr } from '../utils/utils';
-import db, { Ship } from '../db';
+import { getRandomInt, jsonParse, jsonStringify, log, rawDataToStr } from '../utils/utils';
+import db, { Database, Position, Ship } from '../db';
+import { randomUUID } from 'crypto';
 
 export interface Response {
     responseMsg: string;
     broadcast?: boolean; // if we send to all clients
     to?: string[]; // if we send to particular clients
+    delay?: number;
 }
 
 interface ReqDataReg {
@@ -58,12 +60,13 @@ export class WsHandler {
                     }
 
                     break;
-                case 'create_room':
+                case 'create_room': {
                     const eventResponses = this.handleRequestTypeCreateRoom(currentUserId);
                     const eventResponses2 = this.handleResponseTypeUpdateRoom();
 
                     responses.push(...eventResponses, ...eventResponses2);
                     break;
+                }
                 case 'add_user_to_room':
                     if (prsdData) {
                         const eventResponses = this.handleRequestTypeAddToRoom(prsdData, currentUserId);
@@ -88,6 +91,13 @@ export class WsHandler {
                         responses.push(...eventResponses);
                     }
                     break;
+                case 'single_play': {
+                    const eventResponses = this.handleRequestTypeSinglePlay(currentUserId);
+                    const eventResponses2 = this.handleResponseTypeUpdateRoom();
+
+                    responses.push(...eventResponses, ...eventResponses2);
+                    break;
+                }
             }
         }
 
@@ -194,6 +204,7 @@ export class WsHandler {
             const playersIds = db.getGamePlayersIds(game);
 
             if (playersIds.length === 2) {
+                if (!game.turn && game.botId) game.turn = game.botId;
                 const nextTurn = playersIds.filter((id) => id !== game.turn)[0];
 
                 playersIds.forEach((id) => {
@@ -209,6 +220,15 @@ export class WsHandler {
                 const responseMsg2 = this.createResponseMessage('turn', { currentPlayer: nextTurn });
 
                 responses.push({ responseMsg: responseMsg2, to: playersIds });
+
+                if (game.botId && nextTurn === game.botId) {
+                    const eventResponses = this.handleRequestTypeAttack(
+                        { gameId: game.gameId, indexPlayer: game.botId, x: 0, y: 0 },
+                        true
+                    );
+
+                    responses.push(...eventResponses);
+                }
             }
         }
 
@@ -222,7 +242,7 @@ export class WsHandler {
         return [{ responseMsg, broadcast: true }];
     }
 
-    private handleRequestTypeAttack(prsdData: ReqDataAttack, random = false) {
+    private handleRequestTypeAttack(prsdData: ReqDataAttack, random = false, delay = 0) {
         const { gameId, indexPlayer } = prsdData;
         let { x, y } = prsdData;
         const game = db.getGameById(gameId);
@@ -248,7 +268,7 @@ export class WsHandler {
                             status: res.status,
                         });
 
-                        responses.push({ responseMsg, to: [playerId] });
+                        responses.push({ responseMsg, to: [playerId], delay });
                     });
                 });
 
@@ -266,7 +286,17 @@ export class WsHandler {
                     game.turn = nextTurn;
                     const responseMsg2 = this.createResponseMessage('turn', { currentPlayer: nextTurn });
 
-                    responses.push({ responseMsg: responseMsg2, to: playersIds });
+                    responses.push({ responseMsg: responseMsg2, to: playersIds, delay });
+
+                    if (game.botId && nextTurn === game.botId) {
+                        const eventResponses = this.handleRequestTypeAttack(
+                            { gameId: game.gameId, indexPlayer: game.botId, x: 0, y: 0 },
+                            true,
+                            delay + 1500
+                        );
+
+                        responses.push(...eventResponses);
+                    }
                 }
             }
         }
@@ -280,5 +310,101 @@ export class WsHandler {
             data: jsonStringify(data),
             id: 0,
         });
+    }
+
+    private handleRequestTypeSinglePlay(userId: string) {
+        const botId = randomUUID();
+        const players = [userId, botId];
+        const newGame = db.createGame(players, botId);
+        const botShips = this.getRandomShips();
+        const responses: Response[] = [];
+
+        db.removeUserFromRooms(userId);
+        db.addUserShipsToGame(newGame.gameId, botShips, botId);
+
+        players.forEach((id) => {
+            const responseMsg = this.createResponseMessage('create_game', {
+                idGame: newGame.gameId,
+                idPlayer: id,
+            });
+
+            responses.push({
+                responseMsg,
+                to: [id],
+            });
+        });
+
+        return responses;
+    }
+
+    private getRandomShips() {
+        const ships: Ship[] = [
+            { length: 4, type: 'huge', direction: true, position: { x: 0, y: 0 } },
+
+            { length: 3, type: 'large', direction: true, position: { x: 0, y: 0 } },
+            { length: 3, type: 'large', direction: true, position: { x: 0, y: 0 } },
+
+            { length: 2, type: 'medium', direction: true, position: { x: 0, y: 0 } },
+            { length: 2, type: 'medium', direction: true, position: { x: 0, y: 0 } },
+            { length: 2, type: 'medium', direction: true, position: { x: 0, y: 0 } },
+
+            { length: 1, type: 'small', direction: true, position: { x: 0, y: 0 } },
+            { length: 1, type: 'small', direction: true, position: { x: 0, y: 0 } },
+            { length: 1, type: 'small', direction: true, position: { x: 0, y: 0 } },
+            { length: 1, type: 'small', direction: true, position: { x: 0, y: 0 } },
+        ];
+        const occupiedCells: Position[] = [];
+
+        ships.forEach((ship) => {
+            let x = getRandomInt(9);
+            let y = getRandomInt(9);
+            let placed = false;
+            let direction = Boolean(getRandomInt(1));
+            let directionChanged = false;
+
+            while (!placed) {
+                let cells: Position[] = [];
+
+                if (directionChanged) {
+                    directionChanged = false;
+                    x = getRandomInt(9);
+                    y = getRandomInt(9);
+                }
+
+                if (direction) {
+                    for (let y1 = y; y1 < y + ship.length; y1++) {
+                        if (y1 > 9) break;
+
+                        if (!Database.positionInArray(occupiedCells, { x, y: y1 })) {
+                            cells.push({ x, y: y1 });
+                        }
+                    }
+                } else {
+                    for (let x1 = x; x1 < x + ship.length; x1++) {
+                        if (x1 > 9) break;
+
+                        if (!Database.positionInArray(occupiedCells, { x: x1, y })) {
+                            cells.push({ x: x1, y });
+                        }
+                    }
+                }
+
+                if (cells.length === ship.length) {
+                    ship.direction = direction;
+                    ship.position.x = x;
+                    ship.position.y = y;
+                    placed = true;
+                    const extended = Database.getShipExtended(ship);
+                    occupiedCells.push(...extended.around, ...extended.positions);
+
+                    continue;
+                } else {
+                    direction = !direction;
+                    directionChanged = true;
+                }
+            }
+        });
+
+        return ships;
     }
 }

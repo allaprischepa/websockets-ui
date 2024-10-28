@@ -12,7 +12,7 @@ interface Room {
     roomUsers: { name: string; index: string }[];
 }
 
-interface Position {
+export interface Position {
     x: number;
     y: number;
 }
@@ -40,6 +40,7 @@ interface Game {
     }[];
     players: string[];
     turn: string;
+    botId: string;
 }
 
 interface Winner {
@@ -47,7 +48,7 @@ interface Winner {
     wins: number;
 }
 
-class Database {
+export class Database {
     private users: User[] = [];
     private rooms: Room[] = [];
     private games: Game[] = [];
@@ -109,12 +110,13 @@ class Database {
         return this.rooms.filter((room) => room.roomUsers.length === 1);
     }
 
-    createGame(userIds: string[]) {
+    createGame(userIds: string[], botId = '') {
         const newGame: Game = {
             gameId: randomUUID(),
             ships: [],
             players: userIds,
             turn: '',
+            botId,
         };
         this.games.push(newGame);
 
@@ -233,9 +235,9 @@ class Database {
                 let alreadyPlayed = false;
 
                 enemyShips.shipsExtended.forEach((ship) => {
-                    if (!positionIsUnderShip && this.positionInArray(ship.positions, position)) {
+                    if (!positionIsUnderShip && Database.positionInArray(ship.positions, position)) {
                         positionIsUnderShip = true;
-                        alreadyPlayed = this.positionInArray(ship.played, position);
+                        alreadyPlayed = Database.positionInArray(ship.played, position);
 
                         if (!ship.killed) {
                             extraMove = true && !alreadyPlayed;
@@ -252,19 +254,21 @@ class Database {
                                     ship.played.push(aroundPos);
                                 });
                             } else {
-                                if (!this.positionInArray(ship.shotDown, position)) ship.shotDown.push(position);
+                                if (!Database.positionInArray(ship.shotDown, position)) ship.shotDown.push(position);
 
                                 if (ship.positions.length === ship.shotDown.length) {
                                     ship.killed = true;
 
                                     ship.positions.forEach((shipPos) => {
                                         result.push({ status: 'killed', position: shipPos });
-                                        if (!this.positionInArray(ship.played, shipPos)) ship.played.push(shipPos);
+                                        if (!Database.positionInArray(ship.played, shipPos)) ship.played.push(shipPos);
                                     });
 
                                     ship.around.forEach((aroundPos) => {
                                         result.push({ status: 'miss', position: aroundPos });
-                                        if (!this.positionInArray(ship.played, aroundPos)) ship.played.push(aroundPos);
+                                        if (!Database.positionInArray(ship.played, aroundPos)) {
+                                            ship.played.push(aroundPos);
+                                        }
                                     });
                                 } else {
                                     result.push({ status: 'shot', position });
@@ -297,7 +301,7 @@ class Database {
                 const played: Position[] = [];
                 enemyShips.shipsExtended.forEach((ship) => played.push(...ship.played));
 
-                while (this.positionInArray(played, { x, y })) {
+                while (Database.positionInArray(played, { x, y })) {
                     x = getRandomInt(9);
                     y = getRandomInt(9);
                 }
@@ -307,7 +311,7 @@ class Database {
         return { x, y };
     }
 
-    private positionInArray(positionsArr: Position[], position: Position) {
+    static positionInArray(positionsArr: Position[], position: Position) {
         return positionsArr.filter((pos) => pos.x === position.x && pos.y === position.y).length > 0;
     }
 
@@ -381,56 +385,60 @@ class Database {
         const shipsExtended: ShipExtended[] = [];
 
         ships.forEach((ship) => {
-            const {
-                position: { x, y },
-                length,
-                direction,
-            } = ship;
-            const positions: Position[] = [];
-            const around: Position[] = [];
-
-            if (direction) {
-                for (let y1 = y; y1 < y + length; y1++) {
-                    // Set ship positions
-                    positions.push({ x, y: y1 });
-
-                    if (x - 1 >= 0) around.push({ x: x - 1, y: y1 }); // Set around positions from left
-                    if (x + 1 <= 9) around.push({ x: x + 1, y: y1 }); // Set around positions from right
-                }
-
-                for (let x1 = x - 1; x1 <= x + 1; x1++) {
-                    if (x1 >= 0 && x1 <= 9) {
-                        if (y - 1 >= 0) around.push({ x: x1, y: y - 1 }); // Set around positions from above
-                        if (y + length <= 9) around.push({ x: x1, y: y + length }); // Set around positions from below
-                    }
-                }
-            } else {
-                for (let x1 = x; x1 < x + length; x1++) {
-                    // Set ship positions
-                    positions.push({ x: x1, y });
-
-                    if (y - 1 >= 0) around.push({ x: x1, y: y - 1 }); // Set around positions from above
-                    if (y + 1 <= 9) around.push({ x: x1, y: y + 1 }); // Set around positions from below
-                }
-
-                for (let y1 = y - 1; y1 <= y + 1; y1++) {
-                    if (y1 >= 0 && y1 <= 9) {
-                        if (x - 1 >= 0) around.push({ x: x - 1, y: y1 }); // Set around positions from left
-                        if (x + length <= 9) around.push({ x: x + length, y: y1 }); // Set around positions from below
-                    }
-                }
-            }
-
-            shipsExtended.push({
-                positions,
-                shotDown: [],
-                around,
-                played: [],
-                killed: false,
-            });
+            shipsExtended.push(Database.getShipExtended(ship));
         });
 
         return shipsExtended;
+    }
+
+    static getShipExtended(ship: Ship) {
+        const {
+            position: { x, y },
+            length,
+            direction,
+        } = ship;
+        const positions: Position[] = [];
+        const around: Position[] = [];
+
+        if (direction) {
+            for (let y1 = y; y1 < y + length; y1++) {
+                // Set ship positions
+                positions.push({ x, y: y1 });
+
+                if (x - 1 >= 0) around.push({ x: x - 1, y: y1 }); // Set around positions from left
+                if (x + 1 <= 9) around.push({ x: x + 1, y: y1 }); // Set around positions from right
+            }
+
+            for (let x1 = x - 1; x1 <= x + 1; x1++) {
+                if (x1 >= 0 && x1 <= 9) {
+                    if (y - 1 >= 0) around.push({ x: x1, y: y - 1 }); // Set around positions from above
+                    if (y + length <= 9) around.push({ x: x1, y: y + length }); // Set around positions from below
+                }
+            }
+        } else {
+            for (let x1 = x; x1 < x + length; x1++) {
+                // Set ship positions
+                positions.push({ x: x1, y });
+
+                if (y - 1 >= 0) around.push({ x: x1, y: y - 1 }); // Set around positions from above
+                if (y + 1 <= 9) around.push({ x: x1, y: y + 1 }); // Set around positions from below
+            }
+
+            for (let y1 = y - 1; y1 <= y + 1; y1++) {
+                if (y1 >= 0 && y1 <= 9) {
+                    if (x - 1 >= 0) around.push({ x: x - 1, y: y1 }); // Set around positions from left
+                    if (x + length <= 9) around.push({ x: x + length, y: y1 }); // Set around positions from below
+                }
+            }
+        }
+
+        return {
+            positions,
+            shotDown: [],
+            around,
+            played: [],
+            killed: false,
+        };
     }
 }
 

@@ -9,12 +9,23 @@ function sendresponses(server: WebSocketServer, ws: WebSocket, responses: Respon
         responses.forEach((response) => {
             log.magenta(`Response: ${response.responseMsg}`);
 
-            if (response.broadcast) {
-                broadcast(server, response.responseMsg);
-            } else if (response.to) {
-                toSomeClients(server, response.to, response.responseMsg);
+            if (response.delay) {
+                if (response.broadcast) {
+                    setTimeout(() => broadcast(server, response.responseMsg), response.delay);
+                } else if (response.to) {
+                    const toClients = response.to;
+                    setTimeout(() => toSomeClients(server, toClients, response.responseMsg), response.delay);
+                } else {
+                    setTimeout(() => ws.send(response.responseMsg), response.delay);
+                }
             } else {
-                ws.send(response.responseMsg);
+                if (response.broadcast) {
+                    broadcast(server, response.responseMsg);
+                } else if (response.to) {
+                    toSomeClients(server, response.to, response.responseMsg);
+                } else {
+                    ws.send(response.responseMsg);
+                }
             }
         });
     }
