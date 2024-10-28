@@ -32,6 +32,8 @@ interface ReqDataAttack {
     indexPlayer: string;
 }
 
+const DEFAULT_DELAY = 1300;
+
 export class WsHandler {
     handleRequest(
         rawData: RawData,
@@ -283,7 +285,8 @@ export class WsHandler {
 
                     responses.push({ responseMsg, to: playersIds }, ...eventResponses);
                 } else {
-                    game.turn = nextTurn;
+                    if (delay) setTimeout(() => (game.turn = nextTurn), delay);
+                    else game.turn = nextTurn;
                     const responseMsg2 = this.createResponseMessage('turn', { currentPlayer: nextTurn });
 
                     responses.push({ responseMsg: responseMsg2, to: playersIds, delay });
@@ -292,7 +295,7 @@ export class WsHandler {
                         const eventResponses = this.handleRequestTypeAttack(
                             { gameId: game.gameId, indexPlayer: game.botId, x: 0, y: 0 },
                             true,
-                            delay + 1500
+                            delay + DEFAULT_DELAY
                         );
 
                         responses.push(...eventResponses);
